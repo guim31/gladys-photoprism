@@ -76,9 +76,10 @@ const signature = (config) => JSON.stringify([config.url, config.username, confi
 
 const emptySnapshot = () => ({ counts: null, latest: null, indexing: false });
 
+// Not unref'd: while a job request is pending, this timer is what keeps the loop alive.
 const wait = (ms) =>
   new Promise((resolve) => {
-    setTimeout(resolve, ms).unref?.();
+    setTimeout(resolve, ms);
   });
 
 export class PhotoprismHub {
