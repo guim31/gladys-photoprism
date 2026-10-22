@@ -1,169 +1,210 @@
 // -----------------------------------------------------------------------------
-// Dashboard widgets (SDK v0.14+, Gladys 5.1+).
+// Dashboard widget (manifest `widgets`, Gladys 5.1+): `library`, the counters
+// of the PhotoPrism library, the last pictures added (date, place, a video
+// badge), and two direct buttons to start an indexing or an import.
 //
-// A widget puts the integration's own data on the Gladys dashboard without a
-// dedicated core widget. The manifest `widgets` field declares its identity
-// (key, label, icon, optional per-instance `settings`); at runtime the
-// integration returns a DECLARATIVE content — `text`, `value`, `gauge`,
-// `status`, `chart`, `card-list`, `image`, `button` — that the core renders
-// with its own theme, dark mode and translations. No HTML, no CSS.
+// The figures are sent as values, not bound to device features, so the
+// widget works before the device is added to Gladys.
 //
-// Each entry of WIDGETS is keyed by the widget `key` and exposes:
-//   - get(gladys, { settings, language, units, config }): the content,
-//     registered by index.js with `gladys.onWidgetGet(key, ...)`;
-//   - action(gladys, { actionKey, params, settings, config }) (optional): a
-//     tapped `button` carrying an `action`, registered with
-//     `gladys.onWidgetAction`.
-//
-// Check your contents in the tests with `validateWidgetContent` (exported by
-// the SDK, see test/widgets.test.js), or run with DEBUG=gladys-integration-sdk
-// to have the SDK log every violation of the vocabulary and the budget.
+// Thumbnails only when the widget setting asks for them: a picture of the
+// family then reaches every screen showing the dashboard (a public one, Gladys
+// Plus). The content declares a key per picture, Gladys asks for its bytes
+// through onWidgetGetImage, and the hub reads the 224 px tile from the server:
+// the browser never loads a PhotoPrism URL.
 // -----------------------------------------------------------------------------
 
-import {
-  createLogger,
-  DEVICE_FEATURE_CATEGORIES,
-  DEVICE_TRANSPORTS,
-  WIDGET_COLORS,
-} from '@gladysassistant/integration-sdk';
-import { identifyDevice } from './devices/index.js';
-import { weatherStation } from './devices/weatherStation.js';
-import { plug } from './devices/plug.js';
-import { light } from './devices/light.js';
+import { WIDGET_COLORS, validateWidgetImage } from '@gladysassistant/integration-sdk';
+import { MEDIA_TYPES } from './photoprism/model.js';
+import { JOB_KINDS, WIDGET_KEYS } from './hub.js';
+import { dayOf, pick } from './texts.js';
 
-const logger = createLogger({ name: 'widgets' });
+// Action keys of the buttons: permanent once published.
+export const ACTIONS = Object.freeze({
+  START_INDEXING: 'start_indexing',
+  START_IMPORT: 'start_import',
+});
 
-// Widget key, as declared in the manifest `widgets` field.
-export const DEMO_STATUS_WIDGET = 'demo_status';
+const MAX_ROWS = 8;
+const MAX_IMAGE_BYTES = 300 * 1024;
+const THUMB_KEY = /^thumb-([0-9a-f]{40})$/;
 
-// Keys of the `button` actions the demo_status content declares.
-const DEMO_STATUS_ACTIONS = { IDENTIFY_LIGHT: 'identify_light' };
-
-// How the plug transport reads in the status list.
-const TRANSPORT_STATUS = {
-  [DEVICE_TRANSPORTS.LOCAL]: { value: { en: 'Local', fr: 'Locale' }, color: WIDGET_COLORS.SUCCESS },
-  [DEVICE_TRANSPORTS.CLOUD]: { value: { en: 'Cloud', fr: 'Cloud' }, color: WIDGET_COLORS.INFO },
-  [DEVICE_TRANSPORTS.UNREACHABLE]: {
-    value: { en: 'Unreachable', fr: 'Injoignable' },
-    color: WIDGET_COLORS.DANGER,
+export const TEXT = {
+  configure: {
+    en: 'Enter the address of your PhotoPrism server and an app password in the configuration of the integration.',
+    fr: "Saisissez l'adresse de votre serveur PhotoPrism et un mot de passe d'application dans la configuration de l'intégration.",
+    de: 'Gib die Adresse deines PhotoPrism-Servers und ein App-Passwort in der Konfiguration der Integration ein.',
+    es: 'Introduzca la dirección de su servidor PhotoPrism y una contraseña de aplicación en la configuración de la integración.',
   },
+  unreachable: {
+    en: 'The PhotoPrism server does not answer: see the status of the integration.',
+    fr: "Le serveur PhotoPrism ne répond pas : voyez l'état de l'intégration.",
+    de: 'Der PhotoPrism-Server antwortet nicht: Sieh dir den Status der Integration an.',
+    es: 'El servidor PhotoPrism no responde: consulte el estado de la integración.',
+  },
+  empty: {
+    en: 'No photo in the library yet.',
+    fr: 'Aucune photo dans la photothèque pour le moment.',
+    de: 'Noch keine Fotos in der Bibliothek.',
+    es: 'Todavía no hay fotos en la biblioteca.',
+  },
+  photos: { en: 'Photos', fr: 'Photos', de: 'Fotos', es: 'Fotos' },
+  videos: { en: 'Videos', fr: 'Vidéos', de: 'Videos', es: 'Vídeos' },
+  albums: { en: 'Albums', fr: 'Albums', de: 'Alben', es: 'Álbumes' },
+  review: { en: 'To review', fr: 'À valider', de: 'Zu prüfen', es: 'Por revisar' },
+  video: { en: 'Video', fr: 'Vidéo', de: 'Video', es: 'Vídeo' },
+  added: { en: 'Added', fr: 'Ajoutée le', de: 'Hinzugefügt', es: 'Añadida el' },
+  indexing: {
+    en: 'Indexing in progress',
+    fr: 'Indexation en cours',
+    de: 'Indexierung läuft',
+    es: 'Indexación en curso',
+  },
+  inProgress: { en: 'In progress', fr: 'En cours', de: 'Läuft', es: 'En curso' },
+  startIndexing: { en: 'Index', fr: 'Indexer', de: 'Indexieren', es: 'Indexar' },
+  startImport: { en: 'Import', fr: 'Importer', de: 'Importieren', es: 'Importar' },
 };
 
-// A live tile references a feature by its external_id: read it from the
-// discovery payload itself, so the widget and the device never disagree.
-function featureExternalId(gladys, config, blueprint, category) {
-  const device = blueprint.buildDevice(gladys, config);
-  return device.features.find((feature) => feature.category === category).external_id;
+const t = (text, language) => pick(text, language);
+const fit = (text, max) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
+
+function message(text, language) {
+  return {
+    ttl_seconds: 300,
+    components: [{ type: 'text', variant: 'body', text: t(text, language) }],
+  };
 }
 
-function plugConnectionStatus(gladys, config) {
-  const { transport, degraded } = plug.transport(gladys, config);
-  const { value, color } = TRANSPORT_STATUS[transport];
-  if (degraded) {
-    return {
-      value: { en: `${value.en} (degraded mode)`, fr: `${value.fr} (mode dégradé)` },
-      color: WIDGET_COLORS.WARNING,
-    };
+const isTrue = (value) => value === true || value === 'true';
+
+/** Image key of the thumbnail of a picture (its file hash). */
+export const thumbKey = (hash) => (hash ? `thumb-${hash}` : null);
+
+function rowOf(photo, language, thumbnails) {
+  const shot = photo.takenAt ?? photo.addedAt;
+  const description = [
+    photo.title,
+    photo.place,
+    `${t(TEXT.added, language)} ${dayOf(photo.addedAt, language)}`,
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return {
+    title: fit(photo.place ?? photo.title, 60),
+    subtitle: fit(
+      [dayOf(shot, language), photo.place ? photo.title : null].filter(Boolean).join(' · '),
+      120,
+    ),
+    ...(thumbnails && photo.hash ? { image: thumbKey(photo.hash) } : {}),
+    ...(photo.type === MEDIA_TYPES.VIDEO
+      ? { badge: { text: t(TEXT.video, language), color: WIDGET_COLORS.INFO } }
+      : {}),
+    description: fit(description, 2000),
+  };
+}
+
+async function getLibrary(hub, { settings = {}, language = 'en' }) {
+  if (!hub.client) {
+    return message(TEXT.configure, language);
   }
-  return { value, color };
+  const counts = hub.snapshot.counts;
+  if (!counts) {
+    return message(TEXT.unreachable, language);
+  }
+  const components = [
+    { type: 'value', value: counts.photos, label: t(TEXT.photos, language), icon: 'image' },
+    { type: 'value', value: counts.videos, label: t(TEXT.videos, language), icon: 'film' },
+    { type: 'value', value: counts.albums, label: t(TEXT.albums, language), icon: 'book-open' },
+    {
+      type: 'value',
+      value: counts.review,
+      label: t(TEXT.review, language),
+      icon: 'eye',
+      color: counts.review > 0 ? WIDGET_COLORS.WARNING : WIDGET_COLORS.NEUTRAL,
+    },
+  ];
+  if (hub.error) {
+    components.push({ type: 'text', variant: 'body', text: t(TEXT.unreachable, language) });
+  }
+  if (hub.recent.length === 0) {
+    if (!hub.error) {
+      components.push({ type: 'text', variant: 'body', text: t(TEXT.empty, language) });
+    }
+  } else {
+    const thumbnails = isTrue(settings.thumbnails);
+    components.push({
+      type: 'card-list',
+      display: 'list',
+      items: hub.recent.slice(0, MAX_ROWS).map((photo) => rowOf(photo, language, thumbnails)),
+    });
+  }
+  if (hub.snapshot.indexing) {
+    components.push({
+      type: 'status',
+      items: [
+        {
+          label: t(TEXT.indexing, language),
+          value: t(TEXT.inProgress, language),
+          icon: 'loader',
+          color: WIDGET_COLORS.INFO,
+        },
+      ],
+    });
+  } else if (!hub.error) {
+    components.push(
+      {
+        type: 'button',
+        label: t(TEXT.startIndexing, language),
+        icon: 'refresh-cw',
+        style: 'secondary',
+        action: { key: ACTIONS.START_INDEXING },
+      },
+      {
+        type: 'button',
+        label: t(TEXT.startImport, language),
+        icon: 'download',
+        style: 'secondary',
+        action: { key: ACTIONS.START_IMPORT },
+      },
+    );
+  }
+  return { ttl_seconds: 300, components };
+}
+
+async function libraryAction(hub, { actionKey }) {
+  const kind = {
+    [ACTIONS.START_INDEXING]: JOB_KINDS.INDEX,
+    [ACTIONS.START_IMPORT]: JOB_KINDS.IMPORT,
+  }[actionKey];
+  if (!kind) {
+    throw new Error(`Unknown action ${actionKey}`);
+  }
+  const { message: text } = await hub.startJob(kind);
+  return { message: text };
+}
+
+/**
+ * Bytes of a thumbnail, as raw base64 (onWidgetGetImage). Only the pictures
+ * the widget shows, only from the configured server.
+ */
+export async function getImage(hub, imageKey) {
+  const match = THUMB_KEY.exec(String(imageKey));
+  if (!match || !hub.recent.some((photo) => photo.hash === match[1]) || !hub.previewToken) {
+    throw new Error(`Unknown image ${imageKey}`);
+  }
+  const client = hub.requireClient();
+  const { body } = await client.thumbnail(match[1], hub.previewToken);
+  if (!Buffer.isBuffer(body) || body.length === 0 || body.length > MAX_IMAGE_BYTES) {
+    throw new Error(`Thumbnail ${imageKey} is empty or too large`);
+  }
+  const image = body.toString('base64');
+  // The checks of the core (format, header, size): refused here, explained in the logs.
+  const problems = validateWidgetImage(image);
+  if (problems.length > 0) {
+    throw new Error(`Thumbnail ${imageKey} refused: ${problems.join('; ')}`);
+  }
+  return image;
 }
 
 export const WIDGETS = {
-  [DEMO_STATUS_WIDGET]: {
-    // `settings` holds the per-instance values of the declared `settings`
-    // (none here); `language` and `units` are those of the user viewing the
-    // dashboard, for the values you format yourself. Multi-language objects
-    // (`{ en, fr }`) are picked by the core, like everywhere else.
-    async get(gladys, { config }) {
-      logger.debug(`onWidgetGet <- ${DEMO_STATUS_WIDGET}`);
-      return {
-        // Reload policy: the computed parts below only change with the
-        // config, and index.js nudges the widget on every (re)connection and
-        // config update (see refreshWidgets) — the TTL is just a safety net.
-        ttl_seconds: 300,
-        components: [
-          // Device-bound tiles: LIVE, they follow the published states over
-          // the core's real-time path. No TTL, no nudge involved.
-          {
-            type: 'value',
-            label: { en: 'Temperature', fr: 'Température' },
-            icon: 'thermometer',
-            device_feature: featureExternalId(
-              gladys,
-              config,
-              weatherStation,
-              DEVICE_FEATURE_CATEGORIES.TEMPERATURE_SENSOR,
-            ),
-          },
-          {
-            type: 'value',
-            label: { en: 'Office plug', fr: 'Prise du bureau' },
-            icon: 'zap',
-            device_feature: featureExternalId(
-              gladys,
-              config,
-              plug,
-              DEVICE_FEATURE_CATEGORIES.ENERGY_SENSOR,
-            ),
-          },
-          // Computed rows: what the integration knows that no device feature
-          // carries. Served from the core cache until the TTL or a nudge.
-          {
-            type: 'status',
-            items: [
-              {
-                label: { en: 'Plug connection', fr: 'Connexion de la prise' },
-                icon: 'wifi',
-                ...plugConnectionStatus(gladys, config),
-              },
-              {
-                label: { en: 'Observed location', fr: 'Position observée' },
-                icon: 'map-pin',
-                value: `${config.latitude.toFixed(2)}, ${config.longitude.toFixed(2)}`,
-                color: WIDGET_COLORS.NEUTRAL,
-              },
-            ],
-          },
-          // `params` are declared HERE and sent back as-is: the handler never
-          // receives user input (a dashboard can hang on a public wall).
-          {
-            type: 'button',
-            label: { en: 'Identify the light', fr: 'Identifier la lampe' },
-            icon: 'eye',
-            style: 'secondary',
-            action: {
-              key: DEMO_STATUS_ACTIONS.IDENTIFY_LIGHT,
-              params: { device: light.deviceExternalId(gladys) },
-            },
-          },
-        ],
-      };
-    },
-
-    // Resolve an optional toast (string or multi-language object, ≤ 200
-    // characters). After a successful action the core drops the cached
-    // content and every open dashboard refetches it: no nudge needed.
-    async action(gladys, { actionKey, params, config }) {
-      logger.info(`onWidgetAction <- ${DEMO_STATUS_WIDGET}.${actionKey}`);
-      if (actionKey === DEMO_STATUS_ACTIONS.IDENTIFY_LIGHT) {
-        return identifyDevice(gladys, params.device, config);
-      }
-      // Throwing acks the action as failed: the message reaches the user.
-      throw new Error(`Unknown widget action: ${actionKey}`);
-    },
-  },
+  [WIDGET_KEYS.LIBRARY]: { get: getLibrary, action: libraryAction },
 };
-
-/**
- * Freshness nudge: ask the core to re-pull every widget NOW instead of
- * waiting for the content TTL. Call it when you KNOW a computed content
- * changed (here: the config, which drives the plug transport and the observed
- * location) — and after every (re)connection, since the nudges are
- * fire-and-forget: rate-limited core-side to 1 per 10 s per widget, dropped
- * silently while disconnected.
- */
-export function refreshWidgets(gladys) {
-  for (const key of Object.keys(WIDGETS)) {
-    gladys.requestWidgetRefresh(key);
-  }
-}

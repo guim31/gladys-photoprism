@@ -11,6 +11,10 @@ Gladys through
 [`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js),
 its only runtime dependency. It started from the official JavaScript template.
 
+This one connects a **PhotoPrism** server (self-hosted photo library): library
+counters, new photos and album growth as scene triggers, indexing and import
+started from scenes or the widget.
+
 ## Commands
 
 ```bash
@@ -32,15 +36,21 @@ pushing.
 
 ```
 index.js                          SDK wiring only: handlers registered before connect()
-src/devices/index.js              registry of the device blueprints + dispatch helpers
-src/devices/<type>.js             one device type per file (buildDevice, onPoll, onSetValue...)
+src/app.js                        registers every SDK handler on the hub (also used by the tests)
+src/hub.js                        readings on a timer, states, scene events, indexing/import jobs
+src/devices.js                    the library device: features, names in four languages
+src/photoprism/client.js          REST client (/api/v1): auth, error kinds, config, photos, albums, jobs
+src/photoprism/http.js            the one network function (node:http/https), the test seam
+src/photoprism/model.js           parsing of the PhotoPrism answers
 src/scenes.js                     scene action handlers (manifest `scene_actions`)
-src/widgets.js                    dashboard widget handlers (manifest `widgets`)
+src/widgets.js                    the `library` widget, its buttons and thumbnails
+src/texts.js                      every text sent outside the widget, four languages
+src/store.js                      /data/photoprism-state.json (cursor, album counts)
 src/config.js                     DEFAULT_CONFIG (mirrors the manifest defaults) + normalization
-src/weather.js                    example driver (Open-Meteo)
 gladys-assistant-integration.json manifest: name, config_schema, actions, image...
-docs/en.md, docs/fr.md            user documentation, re-hosted by Gladys (mandatory)
-test/                             node --test, against the SDK's fake Gladys (integration-sdk/testing)
+docs/{en,fr,de,es}.md             user documentation, re-hosted by Gladys (en and fr mandatory)
+test/                             node --test, fake PhotoPrism (test/helpers) + the SDK's fake Gladys
+test/fixtures/photoprism/         real answers of PhotoPrism 261007, anonymized
 .github/scripts/release.mjs       release helpers (manifest bump, changelog), tested in test/
 ```
 
@@ -70,8 +80,9 @@ test/                             node --test, against the SDK's fake Gladys (in
   `type: "provider"`: 5.1.0). `test/manifest.test.js` ties the manifest to the
   code (defaults, action, scene and widget handlers): change both sides
   together.
-- **User-facing text** is bilingual (English and French): action messages,
-  manifest texts, and `docs/en.md` / `docs/fr.md`, kept in sync.
+- **User-facing text** exists in English, French, German and Spanish: action
+  messages, manifest texts, feature names, widget texts, and `docs/en.md`,
+  `docs/fr.md`, `docs/de.md`, `docs/es.md`, kept in sync (`test/i18n.test.js`).
 - **Style.** Prettier formats, ESLint catches mistakes. Comments explain why,
   in English. Tests never touch the network.
 
@@ -233,3 +244,26 @@ long, et sur un « Sie »/« Ihr… » de politesse en allemand. Le store exige 
 - Docs `en`, `fr`, `de`, `es` avec les mêmes sections.
 - Chauffe, ouverture, sécurité : ne rien rendre pilotable « comme un thermostat » ou par un assistant
   vocal quand une erreur serait dangereuse (leçon d'OctoPrint).
+
+## PhotoPrism (vérifié sur la 261007, image officielle, 22/10/2026)
+
+- **`GET /api/v1/config` répond 200 à un jeton refusé**, avec la configuration publique
+  (`mode: "public"`, tous les compteurs à 0) : un jeton refusé se reconnaît là (`mode` public alors que
+  `authMode` ne l'est pas), pas au statut HTTP. Les autres routes répondent bien 401.
+- **`POST /api/v1/index` et `POST /api/v1/import/` ne répondent qu'à la fin du travail** (92 s pour
+  150 petites images sans TensorFlow), et `500 {"error":"Already running"}` pendant une autre
+  indexation ou importation. Aucune route ne dit si une indexation tourne (ni `config`, ni `metrics`) :
+  « indexation en cours » ne suit que les tâches lancées depuis Gladys. Les actions rendent la main
+  après `earlyMs` (3 s) et `indexing_finished` annonce la fin ; le délai de la requête est de 12 h.
+- La route d'import **finit par une barre oblique** : `/api/v1/import` sans elle répond 307.
+- Mots de passe d'application (`photoprism auth add -n Gladys -s "*" -e -1 admin`, ou Paramètres →
+  Compte → Applications et appareils) : envoyés tels quels en `Authorization: Bearer`. Une portée
+  `config photos albums` lit et indexe, mais l'import répond 403. Une session (`POST /api/v1/session`)
+  rend `access_token`, valable 2 semaines : rouverte une fois quand elle est refusée.
+- `GET /api/v1/photos?order=added` trie par `CreatedAt` (date d'indexation, à la seconde) : le curseur
+  garde l'instant et les UID de cette seconde. `PlaceLabel` vaut `Unknown` sans lieu ; `TakenAtLocal`
+  est l'heure locale écrite en UTC.
+- `PhotoCount` des albums (`type=album`) suit les ajouts, `UpdatedAt` non.
+- Vignettes : `GET /api/v1/t/<hash>/<previewToken>/tile_224`, sans session (le jeton de prévisualisation
+  vient de `config`), 403 avec un mauvais jeton. Les EXIF de Pillow (`get_ifd`) ne s'écrivent pas :
+  pour des images de test datées et géolocalisées, `exiftool` dans le conteneur PhotoPrism.

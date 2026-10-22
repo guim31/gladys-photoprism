@@ -1,0 +1,31 @@
+[
+  {
+    "UID": "atnbgioid3pw7rir",
+    "ParentUID": "",
+    "Thumb": "a9d43bf95be298858200d95fc828d96f51dc5884",
+    "Slug": "holidays",
+    "Type": "album",
+    "Title": "Holidays",
+    "Location": "",
+    "Category": "",
+    "Caption": "",
+    "Description": "",
+    "Notes": "",
+    "Filter": "",
+    "Order": "oldest",
+    "Template": "",
+    "Path": "",
+    "State": "",
+    "Country": "zz",
+    "Year": 0,
+    "Month": 0,
+    "Day": 0,
+    "Favorite": false,
+    "Private": false,
+    "PhotoCount": 2,
+    "LinkCount": 0,
+    "CreatedAt": "2026-10-22T16:01:36Z",
+    "UpdatedAt": "2026-10-22T16:01:36Z",
+    "DeletedAt": "0001-01-01T00:00:00Z"
+  }
+]

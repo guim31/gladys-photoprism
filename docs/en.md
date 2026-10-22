@@ -1,61 +1,142 @@
-# Demo Devices Template
+# PhotoPrism
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+Bring your [PhotoPrism](https://www.photoprism.app) photo library into Gladys,
+over your local network: the number of photos, videos, albums, places and
+photos to review, the date and place of the last photo added, scenes that react
+when new photos arrive or an album grows, and scene actions that start an
+indexing or an import, with a trigger when it is finished.
 
-## What you get
+The integration was tested against a real PhotoPrism server (the official
+Docker image, version 261007), not yet in a real Gladys installation: feedback
+is welcome on the [Gladys forum](https://community.gladysassistant.com) or in
+the [issues](https://github.com/guim31/gladys-photoprism/issues).
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+## What you need
 
-## Configuration
+- Gladys Assistant 5.1.0 or later.
+- A **PhotoPrism** server reachable from Gladys (same network).
+- An **app password** with full access: in PhotoPrism, **Settings** →
+  **Account** → **Apps and Devices** → **Add**, scope "full access" (or on the
+  server: `photoprism auth add -n Gladys -s "*" -e -1 admin`). The import needs
+  full access; a narrower scope works for the counters only.
+- Without app passwords (older servers, two-factor authentication off), the
+  user name and password of an **admin** account work too.
+- A server in public mode (`PHOTOPRISM_AUTH_MODE=public`) needs neither.
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+## Set up
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+1. Install the integration from the Gladys catalog.
+2. In **Configuration**, enter the **Server URL** with its port (for example
+   `http://192.168.1.20:2342`; behind a reverse proxy,
+   `https://example.org/photos`) and the **app password**. Leave the user name
+   empty with an app password.
+3. Choose the **Refresh** (5 minutes by default) and the **Language of the
+   names**, then save. **Test the connection** reads the server at once.
+4. In **Discovery**, add the **PhotoPrism** device.
 
-## Actions
+## Devices
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+One **PhotoPrism** device, with these features (read-only):
 
-## Scenes
+| Feature              | What it shows                                                            |
+| -------------------- | ------------------------------------------------------------------------ |
+| Photos               | Photos of the library (archived ones excluded)                           |
+| Videos               | Videos of the library                                                    |
+| Albums               | Albums made by the users                                                 |
+| Places               | Places of the photos (needs the geocoding of PhotoPrism)                 |
+| To review            | Photos PhotoPrism puts aside for review (low quality, missing date)      |
+| Last photo added     | Day it was taken and place: `May 14, 2026 · Toulouse, Occitanie, France` |
+| Indexing in progress | 1 while an indexing or an import started from Gladys runs                |
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
-
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
+The integration reads the server itself (three requests per reading):
+nothing to set on the Gladys side. The connection badge of the device turns
+red when the server stops answering.
 
 ## Dashboard
 
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
+The **Photo library** widget shows the counters of photos, videos, albums and
+photos to review, the last photos added (place, day taken, a badge for the
+videos; a tap shows the title and the day added), and two buttons:
+**Index** (new and changed files) and **Import** (the import folder). While a
+job runs, a status line replaces the buttons.
+
+Thumbnails are **off by default**: with the **Show thumbnails** setting, the
+224-pixel tile of each photo is shown, which means your photos appear on every
+screen that displays this dashboard (a shared tablet, a public dashboard, Gladys
+Plus). The browser never loads PhotoPrism directly: Gladys asks the integration,
+which only serves the photos the widget lists.
+
+## Scenes
+
+### Triggers
+
+- **New photos added**: photos or videos were added to the library, whatever
+  the way (upload from the app, WebDAV, import, indexing), seen at the next
+  reading. Variables: number of photos and videos added, photos, videos, title,
+  place and day taken of the last one.
+- **Photos added to an album**: an album holds more photos than at the
+  previous reading (a new album counts from zero). Filter: the album title,
+  exactly as in PhotoPrism. Variables: album title, photos added, photos in the
+  album.
+- **Indexing or import finished**: an indexing or an import started from Gladys
+  (scene or widget) is finished. Filters: kind (indexing, import) and result
+  (success, failure). Variables: kind, result, duration in seconds, photos and
+  videos added.
+
+The additions of an indexing or import started from Gladys are announced
+together at its end, just before **Indexing or import finished**.
+
+### Actions
+
+- **Start an indexing**: PhotoPrism indexes the new and changed files of the
+  originals, or of one folder (`2026/05`). **Complete rescan (slow)** reads every
+  file again. Output: **Already finished** (an indexing of a few files ends
+  within three seconds).
+- **Start an import**: PhotoPrism copies the files of its import folder into the
+  library (they are copied, not moved), into an album when one is named
+  (created if needed). Output: **Already finished**.
+
+Both actions return within a few seconds: PhotoPrism keeps working, and the
+**Indexing or import finished** trigger tells the end. Only one job started
+from Gladys runs at a time; PhotoPrism also refuses a job while another one
+runs (started from its own interface, for example).
+
+### Scene ideas
+
+- Every night at 3 a.m., **Start an indexing**; on **Indexing or import
+  finished** with result "failure", send yourself a message.
+- On **New photos added**, send the family a message with the number of new
+  photos and the place of the last one (variables of the trigger).
+- On **Photos added to an album** "Holidays 2026", show a message on the
+  living room tablet.
 
 ## Troubleshooting
 
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+- **"app password, user name or password refused"**: the app password was
+  deleted or mistyped; with a user name, check the password. An account with
+  two-factor authentication needs an app password.
+- **"permission denied"**: the app password lacks a scope (the import needs
+  full access), or the account is not an admin.
+- **"the server does not answer"**: check the address and the port (2342 for
+  the Docker image) from the Gladys machine.
+- **"certificate refused"**: a self-signed certificate; use the `http://`
+  address on your network.
+- **"an indexing or an import is already running"**: PhotoPrism is busy; try
+  again once it is done.
+- **The indexing ends in failure after a minute behind a reverse proxy**: the
+  proxy cut the request (PhotoPrism answers only at the end). Use the local
+  address, or raise the timeout of the proxy.
+- `LOG_LEVEL=debug` in the logs of the integration shows each reading.
+
+## Limits
+
+- PhotoPrism has no way to tell whether an indexing runs: **Indexing in
+  progress** only follows the jobs started from Gladys.
+- New photos are seen at the next reading (5 minutes by default).
+- Albums: only the albums made by the users, not the moments, folders or
+  calendar.
+- No photo leaves your network through the integration unless you turn on
+  the thumbnails of the widget, and nothing is deleted or moved: no cleanup,
+  imports copy.
+- Not affiliated with PhotoPrism UG. PhotoPrism is a registered trademark of
+  PhotoPrism UG.

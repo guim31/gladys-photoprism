@@ -1,8 +1,8 @@
 {
-  "name": "gladys-integration-template-js",
+  "name": "gladys-photoprism",
   "version": "1.0.0",
   "private": true,
-  "description": "Official starter template to build an external integration for Gladys Assistant with the JavaScript SDK.",
+  "description": "PhotoPrism integration for Gladys Assistant: library counters, new photos and albums as scene triggers, indexing and import from scenes.",
   "type": "module",
   "main": "index.js",
   "scripts": {
