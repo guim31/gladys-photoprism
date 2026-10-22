@@ -30,6 +30,22 @@ Gladys before reporting a problem.
 
 In scope: the code of this repository and the Docker image it publishes.
 
+What the integration keeps and sends:
+
+- The app password, or the user name and password, live in the configuration
+  of the integration in Gladys (the password field is a secret field). They
+  are sent to the PhotoPrism server only, as a Bearer token or to open a
+  session, never logged and never written under `/data`.
+- `/data` holds `photoprism-state.json`: the address of the server, the time
+  and identifiers of the last photo added, and the photo count of each album.
+  No photo, no title, no secret.
+- Network: only the configured PhotoPrism server. Thumbnails are read only
+  when the widget setting asks for them, for the photos the widget lists, and
+  served to Gladys through its widget image proxy.
+- The scene actions only start an indexing (no cleanup) or an import that
+  copies files; nothing is deleted or moved.
+
 Out of scope: Gladys Assistant itself (see its
 [security policy](https://github.com/GladysAssistant/Gladys/security/policy)),
-and the third-party services and devices the integration talks to.
+and PhotoPrism itself (see its
+[security policy](https://github.com/photoprism/photoprism/security/policy)).

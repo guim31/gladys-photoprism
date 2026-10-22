@@ -1,0 +1,6 @@
+{
+  "code": 200,
+  "message": "Indexing completed in 92 s",
+  "messageId": "Indexing completed in %d s",
+  "messageParams": [92]
+}

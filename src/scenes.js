@@ -1,41 +1,42 @@
 // -----------------------------------------------------------------------------
-// Scene actions (SDK v0.14+, Gladys 5.1+).
+// Scene action handlers (manifest `scene_actions`, Gladys 5.1+).
 //
-// A scene action is an OPERATION a scene author places in a scene, with
-// parameters and a result: "identify this device", "take a snapshot", "clean
-// these rooms". Each one is declared in the manifest `scene_actions` field
-// (key, label, `fields` in the config_schema grammar, scalar `outputs`) and
-// handled here, keyed by that same `key`; index.js registers every entry with
-// `gladys.onSceneAction(key, ...)`.
-//
-// Scene TRIGGERS are the other direction ("this happened"): they are fired by
-// the device that observes the event, see src/devices/motionSensor.js.
-//
-// The rules that matter:
-//   - `fields` arrive RESOLVED: scene variables substituted, defaults applied,
-//     validated by the core; a `"source": "devices"` field is the chosen
-//     device external_id;
-//   - resolve an object of the declared `outputs` (scalars only), readable by
-//     the following actions of the scene, or `undefined` for none. Keys not
-//     declared in the manifest are dropped by the core;
-//   - throwing fails THIS action only: the scene logs it and continues. A
-//     scene action is never a condition: return an output and let the scene
-//     author gate on it;
-//   - never fire a scene event as a consequence of a received action: a scene
-//     bound to that event would loop through the integration.
+// Start an indexing of the originals, or an import of the import folder.
+// PhotoPrism answers only once the work is done: the action returns after a
+// few seconds at most, and the `indexing_finished` trigger tells the end.
+// Nothing destructive: no cleanup, files copied by the import, never moved.
 // -----------------------------------------------------------------------------
 
-import { createLogger } from '@gladysassistant/integration-sdk';
-import { signalDevice } from './devices/index.js';
+import { JOB_KINDS } from './hub.js';
+import { ACTION_TEXT, pick } from './texts.js';
 
-const logger = createLogger({ name: 'scenes' });
+// A sub-folder of the originals, as PhotoPrism shows it ("2026/05"); "/" for all.
+export function folderOf(value) {
+  const path = typeof value === 'string' ? value.trim().replace(/^\/+|\/+$/g, '') : '';
+  if (path.split('/').some((part) => part === '..')) {
+    return null;
+  }
+  return path ? `/${path}` : '/';
+}
+
+const isTrue = (value) => value === true || value === 'true';
 
 export const SCENE_ACTIONS = {
-  // The ack is awaited under the action's `timeout_seconds` (15 s in the
-  // manifest), counted from the moment the scene reaches the action.
-  async identify_device(gladys, { fields, config }) {
-    logger.info(`Scene action identify_device <- ${fields.device}`);
-    const signalled = await signalDevice(gladys, fields.device, config);
-    return { signalled };
+  async start_indexing(hub, { fields = {} }) {
+    const path = folderOf(fields.folder);
+    if (path === null) {
+      throw new Error(pick(ACTION_TEXT.invalidFolder, hub.config.language));
+    }
+    const { finished } = await hub.startJob(JOB_KINDS.INDEX, {
+      path,
+      rescan: isTrue(fields.rescan),
+    });
+    return { finished };
+  },
+
+  async start_import(hub, { fields = {} }) {
+    const album = typeof fields.album === 'string' ? fields.album.trim().slice(0, 160) : '';
+    const { finished } = await hub.startJob(JOB_KINDS.IMPORT, { album: album || null });
+    return { finished };
   },
 };
