@@ -278,3 +278,29 @@ test('an unchanged value is republished after 12 hours only', async (t) => {
   await w.hub.refresh();
   assert.equal(count(), 2);
 });
+
+test('past the cap, the other albums are announced at the next reading', async (t) => {
+  const w = await world(t, { timings: { maxEventsPerRead: 1 } });
+  w.server.albums[0].PhotoCount += 1;
+  w.server.albums.push({ ...w.server.albums[0], UID: 'atnew', Title: 'Birthday', PhotoCount: 2 });
+  await w.hub.refresh();
+  assert.equal(events(w, TRIGGERS.ALBUM_PHOTOS_ADDED).length, 1);
+  await w.hub.refresh();
+  assert.deepEqual(
+    events(w, TRIGGERS.ALBUM_PHOTOS_ADDED).map((event) => event.data.album),
+    ['Holidays', 'Birthday'],
+  );
+});
+
+test('a session whose token is ignored (a proxy dropping the header) logs in once per reading', async (t) => {
+  const server = new FakePhotoprism();
+  const w = await world(t, {
+    server,
+    config: { server_url: SERVER_URL, username: 'admin', password: 'secret-1' },
+  });
+  server.authorized = () => false; // the Authorization header never arrives
+  await w.hub.refresh();
+  assert.equal(w.fake.connectionStatus.connected, false);
+  assert.match(w.fake.connectionStatus.message.en, /refused/);
+  assert.ok(server.requests.filter((item) => item.path === '/api/v1/session').length <= 3);
+});

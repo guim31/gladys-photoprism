@@ -8,6 +8,7 @@
 // -----------------------------------------------------------------------------
 
 import { JOB_KINDS } from './hub.js';
+import { ACTION_TEXT, pick } from './texts.js';
 
 // A sub-folder of the originals, as PhotoPrism shows it ("2026/05"); "/" for all.
 export function folderOf(value) {
@@ -24,7 +25,7 @@ export const SCENE_ACTIONS = {
   async start_indexing(hub, { fields = {} }) {
     const path = folderOf(fields.folder);
     if (path === null) {
-      throw new Error('Invalid folder');
+      throw new Error(pick(ACTION_TEXT.invalidFolder, hub.config.language));
     }
     const { finished } = await hub.startJob(JOB_KINDS.INDEX, {
       path,

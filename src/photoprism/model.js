@@ -29,6 +29,8 @@ export function parseConfig(config) {
       videos: count(counts.videos),
       albums: count(counts.albums),
       places: count(counts.places),
+      live: count(counts.live),
+      animated: count(counts.animated),
       review: count(counts.review),
     },
   };
@@ -51,9 +53,7 @@ export function parsePhotos(list) {
       const hash = string(photo.Hash).toLowerCase();
       return {
         uid: photo.UID,
-        type: ['video', 'live', 'animated'].includes(photo.Type)
-          ? MEDIA_TYPES.VIDEO
-          : MEDIA_TYPES.PHOTO,
+        type: photo.Type === 'video' ? MEDIA_TYPES.VIDEO : MEDIA_TYPES.PHOTO,
         title: string(photo.Title) || string(photo.OriginalName) || string(photo.Name) || photo.UID,
         // Local wall time of the shot, written as UTC by PhotoPrism.
         takenAt: timeOf(photo.TakenAtLocal) ?? timeOf(photo.TakenAt),

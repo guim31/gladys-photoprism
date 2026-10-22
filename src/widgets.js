@@ -84,7 +84,7 @@ function rowOf(photo, language, thumbnails) {
   const description = [
     photo.title,
     photo.place,
-    `${t(TEXT.added, language)} ${dayOf(photo.addedAt, language)}`,
+    `${t(TEXT.added, language)} ${dayOf(photo.addedAt, language, null)}`,
   ]
     .filter(Boolean)
     .join('\n');

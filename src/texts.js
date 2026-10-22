@@ -146,6 +146,12 @@ export const ACTION_TEXT = {
     de: 'Kein PhotoPrism-Server ist konfiguriert.',
     es: 'No hay ningún servidor PhotoPrism configurado.',
   },
+  invalidFolder: {
+    en: 'The folder must be inside the originals, without "..".',
+    fr: 'Le dossier doit être dans les originaux, sans « .. ».',
+    de: 'Der Ordner muss in den Originalen liegen, ohne „..“.',
+    es: 'La carpeta debe estar dentro de los originales, sin «..».',
+  },
   running: {
     en: 'An indexing or an import started from Gladys is still running.',
     fr: 'Une indexation ou une importation lancée depuis Gladys est encore en cours.',
@@ -170,13 +176,16 @@ export const everyLanguage = (table, render) =>
     Object.entries(table).map(([language, text]) => [language, render(text, language)]),
   );
 
-/** "14 May 2026": the day of a PhotoPrism local time (stored as UTC). */
-export function dayOf(time, language) {
+/**
+ * "14 May 2026": the day of a PhotoPrism local time (stored as UTC), or of a
+ * real instant in the time zone of the container (`timeZone` null: TZ of Gladys).
+ */
+export function dayOf(time, language, timeZone = 'UTC') {
   return new Intl.DateTimeFormat(language, {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
-    timeZone: 'UTC',
+    ...(timeZone ? { timeZone } : {}),
   }).format(new Date(time));
 }
 

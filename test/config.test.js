@@ -68,7 +68,15 @@ test('defaults, app password, account, public server, incomplete', () => {
 test('the real answers: counters, pictures, albums', () => {
   const config = parseConfig(fixture('config'));
   assert.equal(config.version, '261007');
-  assert.deepEqual(config.counts, { photos: 155, videos: 0, albums: 1, places: 2, review: 153 });
+  assert.deepEqual(config.counts, {
+    photos: 155,
+    videos: 0,
+    albums: 1,
+    places: 2,
+    live: 0,
+    animated: 0,
+    review: 153,
+  });
   const photos = parsePhotos(fixture('photos-added'));
   assert.equal(photos.length, 4);
   assert.equal(photos[0].place, null, '"Unknown" is no place');

@@ -106,10 +106,13 @@ export class PhotoprismClient {
     try {
       return await this.send(path, { ...options, token });
     } catch (err) {
-      if (err.kind !== ERROR_KINDS.AUTH || !this.username || this.token !== token) {
+      if (err.kind !== ERROR_KINDS.AUTH || !this.username) {
         throw err;
       }
-      this.token = null; // expired or revoked session
+      // Expired or revoked session; another call may have renewed it already.
+      if (this.token === token) {
+        this.token = null;
+      }
       return this.send(path, { ...options, token: await this.sessionToken() });
     }
   }
@@ -125,6 +128,9 @@ export class PhotoprismClient {
         ...(timeoutMs ? { timeoutMs } : {}),
       });
     } catch (err) {
+      if (err.code === 'ETOOLARGE') {
+        throw new PhotoprismError(ERROR_KINDS.HTTP, `${path.split('?')[0]}: answer too large`);
+      }
       if (TLS_CODES.has(err.code)) {
         throw new PhotoprismError(ERROR_KINDS.TLS, `Certificate refused (${err.code})`);
       }
@@ -162,7 +168,7 @@ export class PhotoprismClient {
    * The client configuration: version, counts, preview token. A refused
    * token gets the public configuration: reported as such.
    */
-  async config() {
+  async config(retried = false) {
     let config;
     try {
       config = await this.call('/api/v1/config');
@@ -176,9 +182,9 @@ export class PhotoprismClient {
       throw new PhotoprismError(ERROR_KINDS.NOT_PHOTOPRISM, 'No PhotoPrism API at this address');
     }
     if (config.mode === 'public' && config.authMode !== 'public') {
-      if (this.username && this.token) {
+      if (this.username && !retried) {
         this.token = null; // the session expired: open another one, once
-        return this.config();
+        return this.config(true);
       }
       throw new PhotoprismError(ERROR_KINDS.AUTH, 'Credentials refused', { status: 401 });
     }

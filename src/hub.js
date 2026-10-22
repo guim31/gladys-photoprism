@@ -323,7 +323,7 @@ export class PhotoprismHub {
    * The first reading of a server is the starting point, not news.
    */
   async announcePhotos(photos, counts) {
-    const total = counts.photos + counts.videos;
+    const total = totalOf(counts);
     const newest = cursorOf(photos);
     const cursor = this.saved.cursor;
     const previousTotal = this.lastTotal;
@@ -365,16 +365,19 @@ export class PhotoprismHub {
   /** Announce the albums holding more pictures than at the previous reading. */
   async announceAlbums(albums) {
     const previous = this.saved.albums;
-    this.saved.albums = Object.fromEntries(albums.map((album) => [album.uid, album.photos]));
-    this.store.save(this.saved);
-    if (!previous) {
-      return; // the first reading of the albums is the starting point
+    const current = Object.fromEntries(albums.map((album) => [album.uid, album.photos]));
+    const grown = previous
+      ? albums
+          .map((album) => ({ album, added: album.photos - (previous[album.uid] ?? 0) }))
+          .filter(({ added }) => added > 0)
+      : []; // the first reading of the albums is the starting point
+    // Past the cap, an album keeps its previous count: announced at the next reading.
+    for (const { album } of grown.slice(this.timings.maxEventsPerRead)) {
+      current[album.uid] = previous[album.uid] ?? 0;
     }
-    const grown = albums
-      .map((album) => ({ album, added: album.photos - (previous[album.uid] ?? 0) }))
-      .filter(({ added }) => added > 0)
-      .slice(0, this.timings.maxEventsPerRead);
-    for (const { album, added } of grown) {
+    this.saved.albums = current;
+    this.store.save(this.saved);
+    for (const { album, added } of grown.slice(0, this.timings.maxEventsPerRead)) {
       logger.debug(`Album "${album.title}": ${added} new picture(s)`);
       await this.fire(TRIGGERS.ALBUM_PHOTOS_ADDED, {
         album: album.title,
@@ -431,7 +434,14 @@ export class PhotoprismHub {
     this.gladys.requestWidgetRefresh(WIDGET_KEYS.LIBRARY);
   }
 
-  async publishStates({ force = false } = {}) {
+  /** One publication at a time: a late answer never records an older value. */
+  publishStates(options) {
+    const run = (this.publishing ?? Promise.resolve()).then(() => this.publishNow(options));
+    this.publishing = run;
+    return run;
+  }
+
+  async publishNow({ force = false } = {}) {
     const now = this.now();
     const states = [];
     for (const { key, externalId, value, text } of featureValues(this.gladys, this.snapshot)) {
@@ -610,6 +620,8 @@ export class PhotoprismHub {
       return;
     }
     try {
+      // A reading in progress may predate the end of the job: read again after it.
+      await this.running?.catch(() => {});
       await this.refresh();
     } catch (err) {
       this.problem('poll', 'Reading failed', err, 'error');
@@ -629,7 +641,7 @@ export class PhotoprismHub {
   /** Pictures and videos of the library, null before the first reading. */
   total() {
     const counts = this.snapshot.counts;
-    return counts ? counts.photos + counts.videos : null;
+    return counts ? totalOf(counts) : null;
   }
 
   /** "Test the connection": read the server now, one line. */
@@ -649,6 +661,9 @@ export class PhotoprismHub {
     );
   }
 }
+
+// Live and animated pictures have their own counters in PhotoPrism.
+const totalOf = (counts) => counts.photos + counts.videos + counts.live + counts.animated;
 
 const validCursor = (cursor) =>
   cursor && Number.isFinite(cursor.at) && Array.isArray(cursor.uids)
